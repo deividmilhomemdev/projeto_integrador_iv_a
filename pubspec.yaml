@@ -1,0 +1,39 @@
+name: aplicacao
+description: "Aplicativo desenvolvido em caráter acadêmico por Deivid Milhomem."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  url_launcher: ^6.2.0
+  cupertino_icons: ^1.0.8
+  supabase_flutter: ^2.0.0
+  flutter_dotenv: ^6.0.0
+  csv: ^6.0.0
+  #postgres: ^3.2.0
+  #flutter_dotenv: ^6.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+  assets:
+    - env
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/logo.png"
+
