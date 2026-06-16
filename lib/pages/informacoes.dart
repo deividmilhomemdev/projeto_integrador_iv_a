@@ -1,6 +1,7 @@
 // pegou o código?! Arquitetura híbrida limpa, validada e pronta pro deploy! 🚀
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -493,6 +494,9 @@ class _MaisInfoState extends State<MaisInfo> {
 // CLASSES AUXILIARES (Páginas de Detalhes)
 // ==========================================
 
+// ==========================================
+// PÁGINA DE TEXTO COM REGEX E RICHTEXT
+// ==========================================
 class DetalheTextoPage extends StatelessWidget {
   final String titulo;
   final String conteudo;
@@ -505,13 +509,63 @@ class DetalheTextoPage extends StatelessWidget {
     this.linkUrl,
   });
 
-  Future<void> _abrirLink() async {
-    if (linkUrl == null || linkUrl!.isEmpty) return;
-    final uri = Uri.parse(linkUrl!);
+  // Função centralizada para abrir qualquer URL
+  Future<void> _abrirLink(String url) async {
+    if (url.isEmpty) return;
+    final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
+
+  // === A MÁGICA VISIONÁRIA ACONTECE AQUI ===
+  // Função que fatia o texto, identifica URLs via Regex e estiliza dinamicamente
+  List<TextSpan> _extrairLinks(String texto) {
+    // A Regex que fareja qualquer texto começando com http:// ou https://
+    final RegExp exp = RegExp(r'(https?:\/\/[^\s]+)');
+    final Iterable<RegExpMatch> matches = exp.allMatches(texto);
+
+    // Se não achar link nenhum, devolve o texto normal
+    if (matches.isEmpty) {
+      return [TextSpan(text: texto, style: const TextStyle(fontSize: 16, height: 1.6, color: Colors.black87))];
+    }
+
+    int currentPosition = 0;
+    List<TextSpan> spans = [];
+
+    for (RegExpMatch match in matches) {
+      // 1. Pega o pedaço do texto ANTES do link e coloca na lista (como texto comum)
+      if (match.start > currentPosition) {
+        spans.add(TextSpan(
+          text: texto.substring(currentPosition, match.start),
+          style: const TextStyle(fontSize: 16, height: 1.6, color: Colors.black87),
+        ));
+      }
+
+      // 2. Pega o LINK exato, pinta de azul e coloca o rastreador de clique nele
+      final String linkEncontrado = match.group(0)!;
+      spans.add(
+        TextSpan(
+          text: linkEncontrado,
+          style: const TextStyle(fontSize: 16, height: 1.6, color: Colors.blueAccent, decoration: TextDecoration.underline),
+          recognizer: TapGestureRecognizer()..onTap = () => _abrirLink(linkEncontrado),
+        ),
+      );
+
+      currentPosition = match.end;
+    }
+
+    // 3. Pega o restinho do texto DEPOIS do último link (se houver)
+    if (currentPosition < texto.length) {
+      spans.add(TextSpan(
+        text: texto.substring(currentPosition),
+        style: const TextStyle(fontSize: 16, height: 1.6, color: Colors.black87),
+      ));
+    }
+
+    return spans;
+  }
+  // pegou o código?! Fatiou, passou, clicou! O Dart puro resolvendo problemas como um lorde. 🍷💻
 
   @override
   Widget build(BuildContext context) {
@@ -529,19 +583,23 @@ class DetalheTextoPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              conteudo,
-              style: const TextStyle(fontSize: 16, height: 1.6, color: Colors.black87),
+            // Em vez do Text() comum, usamos o SelectableText.rich passando a nossa lista fatiada!
+            // O "Selectable" permite que a voluntária consiga copiar trechos do texto se quiser.
+            SelectableText.rich(
+              TextSpan(children: _extrairLinks(conteudo)),
               textAlign: TextAlign.justify,
             ),
+
             const SizedBox(height: 40),
+
+            // O botão oficial fixo lá embaixo, se o Admin preencheu o campo de URL específico
             if (linkUrl != null && linkUrl!.isNotEmpty)
               Center(
                 child: SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton.icon(
-                    onPressed: _abrirLink,
+                    onPressed: () => _abrirLink(linkUrl!),
                     icon: const Icon(Icons.public, color: Colors.white),
                     label: const Text("Acessar Página Oficial", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                     style: ElevatedButton.styleFrom(
