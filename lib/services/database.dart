@@ -380,4 +380,43 @@ class DatabaseService {
       return 0; // Em caso de erro, retorna 0 para não quebrar a tela
     }
   }
+
+  // ===========================================================================
+  // GESTÃO DE INFORMAÇÕES (ADMIN) 🚀
+  // ===========================================================================
+
+  // Função para CRIAR um novo informativo
+  Future<void> adicionarInformacao({
+    required String titulo,
+    required String tipo,
+    String? descricao,
+    String? url,
+    String? conteudo,
+    int ordem = 0,
+  }) async {
+    try {
+      await supabase.from('tb_informacoes').insert({
+        'titulo': titulo,
+        'descricao': descricao,
+        'tipo': tipo,
+        'url': url,
+        'conteudo': conteudo,
+        'ordem': ordem,
+      });
+    } catch (e) {
+      print('Erro ao adicionar informativo: $e');
+      rethrow;
+    }
+  }
+
+  // Função para DELETAR um informativo existente
+  Future<void> excluirInformacao(int idInformacao) async {
+    try {
+      await supabase.from('tb_informacoes').delete().eq('id', idInformacao);
+    } catch (e) {
+      print('Erro ao excluir informativo: $e');
+      rethrow;
+    }
+  }
+
 }

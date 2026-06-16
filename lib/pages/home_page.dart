@@ -428,7 +428,8 @@ class _HomePageState extends State<HomePage> {
                           "Materiais e Informações",
                           "Consulte documentos e guias do programa",
                           Icons.library_books_outlined,
-                              () => Navigator.pushNamed(context, "/informacoes"),
+                          // Passamos a flag _isAdmin via arguments da rota
+                              () => Navigator.pushNamed(context, "/informacoes", arguments: _isAdmin),
                         ),
                       ],
                     ),

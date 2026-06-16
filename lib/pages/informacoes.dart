@@ -1,10 +1,16 @@
+// pegou o código?! Esse aqui já vem com a inteligência do Storage e UX refinada! 🚀
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-// Certifique-se que o caminho para o seu database está correto
-import '../services/database.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/database.dart'; // Verifique se o caminho está correto para o seu projeto
 
 class MaisInfo extends StatefulWidget {
-  const MaisInfo({super.key});
+  final bool isAdmin;
+
+  const MaisInfo({super.key, this.isAdmin = false});
 
   @override
   State<MaisInfo> createState() => _MaisInfoState();
@@ -13,20 +19,37 @@ class MaisInfo extends StatefulWidget {
 class _MaisInfoState extends State<MaisInfo> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _infos = [];
+  final DatabaseService _db = DatabaseService();
 
   final Color roxoPrincipal = const Color(0xFF6A1B9A);
 
+// 1. Variável local para guardar o poder
+  bool _isAdminLocal = false;
+
+  // Cole este bloco de volta! Ele é o motor de arranque da tela.
   @override
   void initState() {
     super.initState();
     _carregarConteudo();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Captura os argumentos da rota
+    final args = ModalRoute.of(context)?.settings.arguments;
+
+    // Na web, se o usuário der F5 direto na URL, os argumentos podem vir nulos.
+    // Aqui garantimos que só recebe 'true' se o argumento existir e for verdadeiro.
+    if (args is bool) {
+      _isAdminLocal = args;
+      // Retiramos o setState daqui, pois o Flutter já vai buildar a tela logo em seguida com o valor correto.
+    }
+  }
+
   Future<void> _carregarConteudo() async {
     try {
-      final db = DatabaseService();
-      final dados = await db.getInformacoes();
-
+      final dados = await _db.getInformacoes();
       if (mounted) {
         setState(() {
           _infos = dados;
@@ -39,12 +62,214 @@ class _MaisInfoState extends State<MaisInfo> {
     }
   }
 
-  // --- Função para abrir o LinkedIn ---
+  Future<void> _deletarInformativo(int id) async {
+    try {
+      await _db.excluirInformacao(id);
+      _mostrarMensagem("Informativo excluído com sucesso!", Colors.green);
+      _carregarConteudo();
+    } catch (e) {
+      _mostrarErro(context, "Erro ao excluir informativo.");
+    }
+  }
+
+  void _confirmarExclusao(int id) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirmar Exclusão"),
+        content: const Text("Tem certeza que deseja apagar este informativo definitivamente?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deletarInformativo(id);
+            },
+            child: const Text("Excluir", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // === LÓGICA DE UPLOAD DIRETO PARA O SUPABASE STORAGE ===
+  Future<String?> _fazerUploadArquivo(File arquivo, String tipo) async {
+    try {
+      final extensao = tipo == 'imagem' ? 'png' : 'pdf';
+      final nomeArquivo = '${DateTime.now().millisecondsSinceEpoch}.$extensao';
+      final supabase = Supabase.instance.client;
+
+      await supabase.storage.from('informativos').upload(nomeArquivo, arquivo);
+      final urlPublica = supabase.storage.from('informativos').getPublicUrl(nomeArquivo);
+      return urlPublica;
+    } catch (e) {
+      print('Erro no upload: $e');
+      return null;
+    }
+  }
+
+  void _exibirDialogoCadastro() {
+    final txtTitulo = TextEditingController();
+    final txtDescricao = TextEditingController();
+    final txtConteudo = TextEditingController();
+    String tipoSelecionado = 'texto';
+
+    File? arquivoSelecionado;
+    String? nomeArquivoTela;
+    bool isUploading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Impede de fechar clicando fora durante o upload
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text("Nova Informação", style: TextStyle(fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(controller: txtTitulo, decoration: const InputDecoration(labelText: "Título *")),
+                TextField(controller: txtDescricao, decoration: const InputDecoration(labelText: "Descrição (Breve resumo)")),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: tipoSelecionado,
+                  decoration: const InputDecoration(labelText: "Tipo de Conteúdo"),
+                  items: const [
+                    DropdownMenuItem(value: 'texto', child: Text("Texto Longo Interno")),
+                    DropdownMenuItem(value: 'pdf', child: Text("Arquivo PDF")),
+                    DropdownMenuItem(value: 'imagem', child: Text("Imagem da Galeria")),
+                  ],
+                  onChanged: (val) {
+                    setDialogState(() {
+                      tipoSelecionado = val!;
+                      arquivoSelecionado = null; // Reseta o arquivo se mudar o tipo
+                      nomeArquivoTela = null;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                if (tipoSelecionado == 'texto')
+                  TextField(
+                      controller: txtConteudo,
+                      maxLines: 4,
+                      decoration: const InputDecoration(labelText: "Conteúdo do Texto *", alignLabelWithHint: true)
+                  )
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.attach_file),
+                        label: Text(arquivoSelecionado == null ? "Selecionar Arquivo" : "Trocar Arquivo"),
+                        onPressed: () async {
+                          if (tipoSelecionado == 'imagem') {
+                            final picker = ImagePicker();
+                            final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+                            if (pickedFile != null) {
+                              setDialogState(() {
+                                arquivoSelecionado = File(pickedFile.path);
+                                nomeArquivoTela = pickedFile.name;
+                              });
+                            }
+                          } else if (tipoSelecionado == 'pdf') {
+                            FilePickerResult? result = await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['pdf'],
+                            );
+                            if (result != null) {
+                              setDialogState(() {
+                                arquivoSelecionado = File(result.files.single.path!);
+                                nomeArquivoTela = result.files.single.name;
+                              });
+                            }
+                          }
+                        },
+                      ),
+                      if (nomeArquivoTela != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Text("Selecionado: $nomeArquivoTela", style: const TextStyle(fontSize: 12, color: Colors.green)),
+                        )
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            if (!isUploading)
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancelar")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: roxoPrincipal),
+              onPressed: isUploading ? null : () async {
+                // Validações básicas
+                if (txtTitulo.text.isEmpty) {
+                  _mostrarMensagem("O título é obrigatório.", Colors.orange);
+                  return;
+                }
+                if (tipoSelecionado == 'texto' && txtConteudo.text.isEmpty) {
+                  _mostrarMensagem("Preencha o conteúdo do texto.", Colors.orange);
+                  return;
+                }
+                if (tipoSelecionado != 'texto' && arquivoSelecionado == null) {
+                  _mostrarMensagem("Por favor, selecione um arquivo.", Colors.orange);
+                  return;
+                }
+
+                setDialogState(() => isUploading = true);
+
+                String? urlFinal;
+
+                // Se for arquivo, sobe pro banco primeiro
+                if (tipoSelecionado != 'texto') {
+                  urlFinal = await _fazerUploadArquivo(arquivoSelecionado!, tipoSelecionado);
+                  if (urlFinal == null) {
+                    setDialogState(() => isUploading = false);
+                    _mostrarMensagem("Falha ao enviar arquivo para o servidor.", Colors.red);
+                    return;
+                  }
+                }
+
+                // Grava no banco de dados (tb_informacoes)
+                await _db.adicionarInformacao(
+                  titulo: txtTitulo.text,
+                  descricao: txtDescricao.text.isEmpty ? null : txtDescricao.text,
+                  tipo: tipoSelecionado,
+                  url: urlFinal, // Será nulo se for tipo 'texto'
+                  conteudo: tipoSelecionado == 'texto' ? txtConteudo.text : null,
+                  ordem: _infos.length + 1,
+                );
+
+                if (context.mounted) Navigator.pop(context);
+                _mostrarMensagem("Informativo adicionado com sucesso!", Colors.green);
+                _carregarConteudo();
+              },
+              child: isUploading
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text("Salvar", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _abrirLinkedinDeivid() async {
     final Uri url = Uri.parse('https://www.linkedin.com/in/deivid-milhomem-ba7777135/');
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
       _mostrarErro(context, 'Não foi possível abrir o link do LinkedIn.');
     }
+  }
+
+  void _mostrarMensagem(String msg, Color cor) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: cor));
+    }
+  }
+
+  void _mostrarErro(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
   @override
@@ -57,20 +282,21 @@ class _MaisInfoState extends State<MaisInfo> {
         foregroundColor: Colors.white,
         elevation: 0,
       ),
+      floatingActionButton: _isAdminLocal
+          ? FloatingActionButton(
+        backgroundColor: roxoPrincipal,
+        onPressed: _exibirDialogoCadastro,
+        child: const Icon(Icons.add, color: Colors.white),
+      )
+          : null,
       body: Column(
         children: [
-          // === REQ 2: HEADER ACOLHEDOR ===
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
               color: roxoPrincipal,
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(24),
-                bottomRight: Radius.circular(24),
-              ),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 4)),
-              ],
+              borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24)),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 4))],
             ),
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
             child: const Column(
@@ -85,14 +311,12 @@ class _MaisInfoState extends State<MaisInfo> {
                 ),
                 SizedBox(height: 12),
                 Text(
-                  "Esta página é o seu portal de comunicação interna. Aqui você encontra guias, manuais, cartilhas e informações institucionais de apoio preparadas pela Ouvidoria. Sinta-se à vontade para explorar e tirar suas dúvidas!",
+                  "Esta página é o seu portal de comunicação interna. Aqui você encontra guias, manuais, cartilhas e informações institucionais de apoio preparadas pela Ouvidoria.",
                   style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
                 ),
               ],
             ),
           ),
-
-          // === LISTA DE CONTEÚDOS ===
           Expanded(
             child: _isLoading
                 ? Center(child: CircularProgressIndicator(color: roxoPrincipal))
@@ -112,7 +336,6 @@ class _MaisInfoState extends State<MaisInfo> {
               itemCount: _infos.length,
               itemBuilder: (context, index) {
                 final item = _infos[index];
-
                 IconData icone;
                 Color corIcone;
 
@@ -166,7 +389,11 @@ class _MaisInfoState extends State<MaisInfo> {
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          if (_isAdminLocal)
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                              onPressed: () => _confirmarExclusao(item['id']),
+                            ),
                           Icon(Icons.chevron_right, size: 20, color: Colors.grey.shade400),
                         ],
                       ),
@@ -176,14 +403,9 @@ class _MaisInfoState extends State<MaisInfo> {
               },
             ),
           ),
-
-          // === REQ 4: RODAPÉ (CRÉDITOS ACADÊMICOS) ===
           Container(
             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: Colors.grey.shade300)),
-            ),
+            decoration: BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Colors.grey.shade300))),
             child: InkWell(
               onTap: _abrirLinkedinDeivid,
               borderRadius: BorderRadius.circular(8),
@@ -191,20 +413,13 @@ class _MaisInfoState extends State<MaisInfo> {
                 padding: const EdgeInsets.all(8.0),
                 child: Column(
                   children: [
-                    const Text(
-                      "Aplicativo voluntário originado de um projeto acadêmico.",
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
+                    const Text("Aplicativo voluntário originado de um projeto acadêmico.", style: TextStyle(fontSize: 11, color: Colors.grey), textAlign: TextAlign.center),
                     const SizedBox(height: 4),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const Text("Desenvolvido por ", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(
-                          "Deivid Milhomem",
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: roxoPrincipal, decoration: TextDecoration.underline),
-                        ),
+                        Text("Deivid Milhomem", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: roxoPrincipal, decoration: TextDecoration.underline)),
                       ],
                     ),
                   ],
@@ -224,24 +439,10 @@ class _MaisInfoState extends State<MaisInfo> {
     final conteudo = info['conteudo'] ?? '';
 
     if (tipo == 'texto') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DetalheTextoPage(
-            titulo: titulo,
-            conteudo: conteudo,
-            linkUrl: url,
-          ),
-        ),
-      );
+      Navigator.push(context, MaterialPageRoute(builder: (_) => DetalheTextoPage(titulo: titulo, conteudo: conteudo, linkUrl: url)));
     } else if (tipo == 'imagem') {
       if (url.isNotEmpty) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => DetalheImagemPage(titulo: titulo, url: url),
-          ),
-        );
+        Navigator.push(context, MaterialPageRoute(builder: (_) => DetalheImagemPage(titulo: titulo, url: url)));
       } else {
         _mostrarErro(context, "URL da imagem não encontrada.");
       }
@@ -263,19 +464,15 @@ class _MaisInfoState extends State<MaisInfo> {
         await launchUrl(uri, mode: LaunchMode.platformDefault);
       }
     } catch (e) {
-      print("Erro URL: $e");
       _mostrarErro(context, "Não foi possível abrir o link.");
     }
-  }
-
-  void _mostrarErro(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 }
 
 // ==========================================
-// TELA DE TEXTO COM LINK OPCIONAL (Atualizada!)
+// CLASSES AUXILIARES (Páginas de Detalhes)
 // ==========================================
+
 class DetalheTextoPage extends StatelessWidget {
   final String titulo;
   final String conteudo;
