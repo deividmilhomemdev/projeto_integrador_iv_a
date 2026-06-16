@@ -1,4 +1,4 @@
-// pegou o código?! Esse aqui já vem com a inteligência do Storage e UX refinada! 🚀
+// pegou o código?! Arquitetura híbrida limpa, validada e pronta pro deploy! 🚀
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -23,10 +23,9 @@ class _MaisInfoState extends State<MaisInfo> {
 
   final Color roxoPrincipal = const Color(0xFF6A1B9A);
 
-// 1. Variável local para guardar o poder
+  // 1. Variável local para guardar o poder
   bool _isAdminLocal = false;
 
-  // Cole este bloco de volta! Ele é o motor de arranque da tela.
   @override
   void initState() {
     super.initState();
@@ -39,11 +38,8 @@ class _MaisInfoState extends State<MaisInfo> {
     // Captura os argumentos da rota
     final args = ModalRoute.of(context)?.settings.arguments;
 
-    // Na web, se o usuário der F5 direto na URL, os argumentos podem vir nulos.
-    // Aqui garantimos que só recebe 'true' se o argumento existir e for verdadeiro.
     if (args is bool) {
       _isAdminLocal = args;
-      // Retiramos o setState daqui, pois o Flutter já vai buildar a tela logo em seguida com o valor correto.
     }
   }
 
@@ -92,14 +88,29 @@ class _MaisInfoState extends State<MaisInfo> {
     );
   }
 
-  // === LÓGICA DE UPLOAD DIRETO PARA O SUPABASE STORAGE ===
-  Future<String?> _fazerUploadArquivo(File arquivo, String tipo) async {
+  // === LÓGICA DE UPLOAD HÍBRIDO (WEB & MOBILE) ===
+  Future<String?> _fazerUploadHibrido(dynamic arquivo, String tipo) async {
     try {
       final extensao = tipo == 'imagem' ? 'png' : 'pdf';
       final nomeArquivo = '${DateTime.now().millisecondsSinceEpoch}.$extensao';
       final supabase = Supabase.instance.client;
 
-      await supabase.storage.from('informativos').upload(nomeArquivo, arquivo);
+      if (arquivo is XFile) {
+        final bytes = await arquivo.readAsBytes();
+        await supabase.storage.from('informativos').uploadBinary(nomeArquivo, bytes);
+      }
+      else if (arquivo is PlatformFile) {
+        if (arquivo.bytes != null) {
+          await supabase.storage.from('informativos').uploadBinary(nomeArquivo, arquivo.bytes!);
+        }
+        else if (arquivo.path != null) {
+          final file = File(arquivo.path!);
+          await supabase.storage.from('informativos').upload(nomeArquivo, file);
+        } else {
+          throw Exception("Arquivo inválido. Caminho e bytes estão nulos.");
+        }
+      }
+
       final urlPublica = supabase.storage.from('informativos').getPublicUrl(nomeArquivo);
       return urlPublica;
     } catch (e) {
@@ -114,13 +125,15 @@ class _MaisInfoState extends State<MaisInfo> {
     final txtConteudo = TextEditingController();
     String tipoSelecionado = 'texto';
 
-    File? arquivoSelecionado;
+    // Novas variáveis universais para substituir o antigo 'File'
+    XFile? arquivoXFile;
+    PlatformFile? arquivoPlatform;
     String? nomeArquivoTela;
     bool isUploading = false;
 
     showDialog(
       context: context,
-      barrierDismissible: false, // Impede de fechar clicando fora durante o upload
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text("Nova Informação", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -143,7 +156,8 @@ class _MaisInfoState extends State<MaisInfo> {
                   onChanged: (val) {
                     setDialogState(() {
                       tipoSelecionado = val!;
-                      arquivoSelecionado = null; // Reseta o arquivo se mudar o tipo
+                      arquivoXFile = null;
+                      arquivoPlatform = null;
                       nomeArquivoTela = null;
                     });
                   },
@@ -162,14 +176,15 @@ class _MaisInfoState extends State<MaisInfo> {
                     children: [
                       OutlinedButton.icon(
                         icon: const Icon(Icons.attach_file),
-                        label: Text(arquivoSelecionado == null ? "Selecionar Arquivo" : "Trocar Arquivo"),
+                        label: Text((arquivoXFile == null && arquivoPlatform == null) ? "Selecionar Arquivo" : "Trocar Arquivo"),
                         onPressed: () async {
                           if (tipoSelecionado == 'imagem') {
                             final picker = ImagePicker();
                             final pickedFile = await picker.pickImage(source: ImageSource.gallery);
                             if (pickedFile != null) {
                               setDialogState(() {
-                                arquivoSelecionado = File(pickedFile.path);
+                                arquivoXFile = pickedFile;
+                                arquivoPlatform = null;
                                 nomeArquivoTela = pickedFile.name;
                               });
                             }
@@ -177,11 +192,13 @@ class _MaisInfoState extends State<MaisInfo> {
                             FilePickerResult? result = await FilePicker.platform.pickFiles(
                               type: FileType.custom,
                               allowedExtensions: ['pdf'],
+                              withData: true, // Garante que a Web consiga ler o PDF
                             );
-                            if (result != null) {
+                            if (result != null && result.files.isNotEmpty) {
                               setDialogState(() {
-                                arquivoSelecionado = File(result.files.single.path!);
-                                nomeArquivoTela = result.files.single.name;
+                                arquivoPlatform = result.files.first;
+                                arquivoXFile = null;
+                                nomeArquivoTela = result.files.first.name;
                               });
                             }
                           }
@@ -203,7 +220,7 @@ class _MaisInfoState extends State<MaisInfo> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: roxoPrincipal),
               onPressed: isUploading ? null : () async {
-                // Validações básicas
+                // Validações básicas ajustadas
                 if (txtTitulo.text.isEmpty) {
                   _mostrarMensagem("O título é obrigatório.", Colors.orange);
                   return;
@@ -212,7 +229,7 @@ class _MaisInfoState extends State<MaisInfo> {
                   _mostrarMensagem("Preencha o conteúdo do texto.", Colors.orange);
                   return;
                 }
-                if (tipoSelecionado != 'texto' && arquivoSelecionado == null) {
+                if (tipoSelecionado != 'texto' && arquivoXFile == null && arquivoPlatform == null) {
                   _mostrarMensagem("Por favor, selecione um arquivo.", Colors.orange);
                   return;
                 }
@@ -221,9 +238,12 @@ class _MaisInfoState extends State<MaisInfo> {
 
                 String? urlFinal;
 
-                // Se for arquivo, sobe pro banco primeiro
+                // Fluxo de Upload Universal
                 if (tipoSelecionado != 'texto') {
-                  urlFinal = await _fazerUploadArquivo(arquivoSelecionado!, tipoSelecionado);
+                  final arquivoParaSubir = tipoSelecionado == 'imagem' ? arquivoXFile : arquivoPlatform;
+
+                  urlFinal = await _fazerUploadHibrido(arquivoParaSubir, tipoSelecionado);
+
                   if (urlFinal == null) {
                     setDialogState(() => isUploading = false);
                     _mostrarMensagem("Falha ao enviar arquivo para o servidor.", Colors.red);
@@ -231,12 +251,12 @@ class _MaisInfoState extends State<MaisInfo> {
                   }
                 }
 
-                // Grava no banco de dados (tb_informacoes)
+                // Grava no banco de dados
                 await _db.adicionarInformacao(
                   titulo: txtTitulo.text,
                   descricao: txtDescricao.text.isEmpty ? null : txtDescricao.text,
                   tipo: tipoSelecionado,
-                  url: urlFinal, // Será nulo se for tipo 'texto'
+                  url: urlFinal,
                   conteudo: tipoSelecionado == 'texto' ? txtConteudo.text : null,
                   ordem: _infos.length + 1,
                 );
